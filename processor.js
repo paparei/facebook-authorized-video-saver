@@ -1,4 +1,4 @@
-import { describeTracks, mergeMp4, parseMp4 } from './muxer.mjs';
+import { assertCompatiblePair, describeTracks, mergeMp4, parseMp4 } from './muxer.mjs';
 
 const MAX_MEDIA_BYTES = 750 * 1024 * 1024;
 const status = document.querySelector('#status');
@@ -181,21 +181,41 @@ async function preparePreview(autoSave = false) {
         if (embeddedAudio) {
             log('Facebook exposed a complete MP4 with embedded audio; no merge is needed.');
         } else {
-            const audioBuffer = videoCandidate.url === audioCandidate.url
-                ? videoBuffer
-                : await downloadBuffer(audioCandidate, 'audio track', 40, 76);
-            setStatus('Validating the audio track…', 78);
-            const audioParsed = videoCandidate.url === audioCandidate.url
-                ? videoParsed
-                : parseMp4(audioBuffer, true);
-            const audioTrack = bestTrack(audioParsed, 'audio');
-            if (!audioTrack) throw new Error('The selected audio response contains no complete audio track. Choose another captured option.');
+            const alternatives = autoSave
+                ? [audioCandidate, ...job.candidates.filter((candidate) =>
+                    candidate.url !== audioCandidate.url && candidateKind(candidate) === 'audio')]
+                : [audioCandidate];
+            let lastError;
+            for (const candidate of alternatives) {
+                try {
+                    const audioBuffer = videoCandidate.url === candidate.url
+                        ? videoBuffer
+                        : await downloadBuffer(candidate, 'audio track', 40, 76);
+                    setStatus('Validating the audio track…', 78);
+                    const audioParsed = videoCandidate.url === candidate.url
+                        ? videoParsed
+                        : parseMp4(audioBuffer, true);
+                    const audioTrack = bestTrack(audioParsed, 'audio');
+                    if (!audioTrack) throw new Error('The selected audio response contains no complete audio track. Choose another captured option.');
+                    assertCompatiblePair([videoTrack, audioTrack]);
 
-            log(`Muxing ${videoTrack.codec} video with ${audioTrack.codec} audio without re-encoding.`);
-            output = await mergeMp4([
-                { parsed: videoParsed, trackId: videoTrack.id, kind: 'video' },
-                { parsed: audioParsed, trackId: audioTrack.id, kind: 'audio' },
-            ], (ratio) => setStatus('Merging tracks locally…', 80 + ratio * 15));
+                    log(`Muxing ${videoTrack.codec} video with ${audioTrack.codec} audio without re-encoding.`);
+                    output = await mergeMp4([
+                        { parsed: videoParsed, trackId: videoTrack.id, kind: 'video' },
+                        { parsed: audioParsed, trackId: audioTrack.id, kind: 'audio' },
+                    ], (ratio) => setStatus('Merging tracks locally…', 80 + ratio * 15));
+                    audioSelect.value = candidate.url;
+                    lastError = null;
+                    break;
+                } catch (error) {
+                    if (!autoSave) throw error;
+                    lastError = error;
+                    log(`Skipping captured audio: ${error.message || error}`);
+                }
+            }
+            if (lastError) {
+                throw new Error(`No captured audio matched this video. Replay only the target video and retry. ${lastError.message || lastError}`);
+            }
         }
 
         setStatus('Preparing the local preview…', 98);

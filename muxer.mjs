@@ -35,6 +35,18 @@ export function parseMp4(value, keepMediaData = false) {
     return { file, info };
 }
 
+function sampleTiming(samples) {
+    if (!samples?.length) return null;
+    let start = Infinity;
+    let end = -Infinity;
+    for (const sample of samples) {
+        const dts = Number(sample.dts) || 0;
+        start = Math.min(start, dts);
+        end = Math.max(end, dts + (Number(sample.duration) || 0));
+    }
+    return { start, duration: Math.max(0, end - start) };
+}
+
 export function describeTracks(parsed) {
     return parsed.info.tracks
         .map((track) => {
@@ -42,18 +54,21 @@ export function describeTracks(parsed) {
             if (!kind) return null;
             const internal = parsed.file.getTrackById(track.id);
             const entry = internal?.mdia?.minf?.stbl?.stsd?.entries?.[0];
-            const sampleCount = Number(track.nb_samples ?? internal?.samples?.length ?? 0);
+            const samples = internal?.samples || [];
+            const timing = sampleTiming(samples);
+            const sampleCount = Number(samples.length || track.nb_samples || 0);
             return {
                 id: track.id,
                 kind,
                 codec: track.codec || entry?.type || 'unknown',
                 language: typeof track.language === 'string' ? track.language : 'und',
-                duration: Number(track.duration) || 0,
+                duration: timing?.duration || Number(track.duration) || 0,
+                startDts: timing?.start || 0,
                 timescale: Number(track.timescale) || 1,
                 sampleCount,
                 width: Number(track.video?.width || entry?.width) || 0,
                 height: Number(track.video?.height || entry?.height) || 0,
-                sampleRate: Number(track.audio?.sample_rate) || 0,
+                sampleRate: Number(track.audio?.sample_rate || entry?.samplerate) || 0,
                 channels: Number(track.audio?.channel_count || entry?.channel_count) || 0,
             };
         })
@@ -97,17 +112,17 @@ function creationOptions(parsed, track) {
         height: entry.height || track.height || 0,
         channel_count: entry.channel_count || track.channels || 2,
         samplesize: entry.samplesize || 16,
-        samplerate: entry.samplerate || (track.sampleRate << 16) || 65_536,
+        samplerate: entry.samplerate || track.sampleRate || 48_000,
         description_boxes: (entry.boxes || []).map(cloneDescriptionBox),
     };
 }
 
-function sampleOptions(sample) {
+function sampleOptions(sample, startDts) {
     return {
         sample_description_index: (sample.description_index || 0) + 1,
         duration: sample.duration,
-        cts: sample.cts,
-        dts: sample.dts,
+        cts: sample.cts - startDts,
+        dts: sample.dts - startDts,
         is_sync: sample.is_sync,
         is_leading: sample.is_leading,
         depends_on: sample.depends_on,
@@ -149,36 +164,46 @@ export async function mergeMp4(sources, onProgress = () => {}) {
         duration: Math.round(longestSeconds * MOVIE_TIMESCALE),
     });
 
-    const totalSamples = selected.reduce((total, { track }) => total + track.sampleCount, 0);
-    let copied = 0;
-    for (const { parsed, track } of selected) {
+    const states = selected.map(({ parsed, track }) => {
         const outputTrackId = output.addTrack(creationOptions(parsed, track));
         if (!outputTrackId) throw new Error(`Codec ${track.codec} is not supported by the local MP4 merger.`);
-
         const samples = parsed.file.getTrackSamplesInfo(track.id) || [];
-        if (samples.length !== track.sampleCount) track.sampleCount = samples.length;
-        for (let index = 0; index < samples.length; index++) {
-            const sample = parsed.file.getTrackSample(track.id, index);
-            if (!sample?.data || sample.data.byteLength !== sample.size) {
-                throw new Error(`The ${track.kind} download is incomplete at sample ${index + 1}.`);
-            }
-            output.addSample(outputTrackId, sample.data, sampleOptions(sample));
-            sample.data = undefined;
-            copied++;
-            if (copied % 200 === 0) {
-                onProgress(copied / totalSamples);
-                await new Promise((resolve) => setTimeout(resolve));
-            }
+        if (samples.length !== track.sampleCount) throw new Error(`The ${track.kind} sample table is incomplete.`);
+        return { parsed, track, outputTrackId, samples, index: 0 };
+    });
+
+    const totalSamples = states.reduce((total, { samples }) => total + samples.length, 0);
+    let copied = 0;
+    while (copied < totalSamples) {
+        const state = states
+            .filter(({ index, samples }) => index < samples.length)
+            .sort((a, b) => (
+                (a.samples[a.index].dts - a.track.startDts) / a.track.timescale
+                - (b.samples[b.index].dts - b.track.startDts) / b.track.timescale
+            ))[0];
+        const sample = state.parsed.file.getTrackSample(state.track.id, state.index);
+        if (!sample?.data || sample.data.byteLength !== sample.size) {
+            throw new Error(`The ${state.track.kind} download is incomplete at sample ${state.index + 1}.`);
+        }
+        output.addSample(state.outputTrackId, sample.data, sampleOptions(sample, state.track.startDts));
+        sample.data = undefined;
+        state.index++;
+        copied++;
+        if (copied % 200 === 0) {
+            onProgress(copied / totalSamples);
+            await new Promise((resolve) => setTimeout(resolve));
         }
     }
 
     onProgress(1);
     const result = output.getBuffer().buffer;
-    const validation = parseMp4(result);
-    const resultTracks = describeTracks(validation);
-    if (!resultTracks.some(({ kind, sampleCount }) => kind === 'video' && sampleCount > 0)
-        || !resultTracks.some(({ kind, sampleCount }) => kind === 'audio' && sampleCount > 0)) {
-        throw new Error('Merged MP4 validation failed; no file was saved.');
+    const resultTracks = describeTracks(parseMp4(result));
+    assertCompatiblePair(resultTracks);
+    for (const { track } of selected) {
+        const resultTrack = resultTracks.find(({ kind }) => kind === track.kind);
+        if (resultTrack?.sampleCount !== track.sampleCount) {
+            throw new Error(`Merged MP4 validation failed for the ${track.kind} track.`);
+        }
     }
     return result;
 }
