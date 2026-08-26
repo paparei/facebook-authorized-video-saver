@@ -223,9 +223,9 @@ async function init() {
     await chrome.storage.session.remove(key);
     if (!job || Date.now() - job.createdAt > 10 * 60 * 1000) throw new Error('This processing job expired. Replay the Facebook video and try again.');
 
-    job.candidates = job.candidates.filter(({ url }) => allowedUrl(url));
-    const videoCandidates = job.candidates.filter((candidate) => candidateKind(candidate) !== 'audio');
-    const likelyAudioCandidates = job.candidates.filter((candidate) => candidateKind(candidate) !== 'video');
+    job.candidates = job.candidates.filter(({ url, mime = '' }) => allowedUrl(url) && !/^image\//i.test(mime));
+    const videoCandidates = job.candidates.filter((candidate) => candidateKind(candidate) === 'video');
+    const likelyAudioCandidates = job.candidates.filter((candidate) => candidateKind(candidate) === 'audio');
     const audioCandidates = likelyAudioCandidates.length ? likelyAudioCandidates : videoCandidates;
     const canPrepare = Boolean(videoCandidates.length && audioCandidates.length);
     populate(videoSelect, videoCandidates, 'video');
@@ -265,6 +265,7 @@ console.assert(
     allowedUrl('https://video.example.fbcdn.net/video.mp4')
         && !allowedUrl('https://fbcdn.net.example.com/video.mp4')
         && candidateKind({ tag: 'dash_h264', isVideo: true }) === 'video'
-        && candidateKind({ tag: 'audio_aac', isAudio: true }) === 'audio',
+        && candidateKind({ tag: 'audio_aac', isAudio: true }) === 'audio'
+        && candidateKind({ mime: 'image/jpeg' }) === 'unknown',
     '[Facebook Authorized Video Saver] Processor self-check failed',
 );

@@ -40,11 +40,8 @@ function decodeEfg(url) {
     }
 }
 
-function looksLikeMedia(details, parsed) {
-    return details.type === 'media'
-        || parsed.searchParams.has('efg')
-        || /^video/i.test(parsed.hostname)
-        || /\/(?:v|video)\//i.test(parsed.pathname);
+function looksLikeMedia(details, metadata) {
+    return details.type === 'media' || Boolean(metadata.isAudio || metadata.isVideo);
 }
 
 function prune(tabId, now = Date.now()) {
@@ -62,8 +59,8 @@ chrome.webRequest.onBeforeRequest.addListener(
         if (details.tabId < 0 || details.initiator?.startsWith('chrome-extension://')) return;
         const canonicalUrl = canonicalMediaUrl(details.url);
         if (!canonicalUrl) return;
-        const parsed = new URL(details.url);
-        if (!looksLikeMedia(details, parsed)) return;
+        const metadata = decodeEfg(details.url);
+        if (!looksLikeMedia(details, metadata)) return;
 
         const now = Date.now();
         const entries = tabMedia.get(details.tabId) || new Map();
@@ -73,7 +70,7 @@ chrome.webRequest.onBeforeRequest.addListener(
             lastSeen: now,
             mime: '',
             totalBytes: 0,
-            ...decodeEfg(details.url),
+            ...metadata,
         };
         entry.lastSeen = now;
         entry.requestType = details.type;
@@ -95,6 +92,11 @@ chrome.webRequest.onHeadersReceived.addListener(
             (details.responseHeaders || []).map(({ name, value = '' }) => [name.toLowerCase(), value]),
         );
         entry.mime = headers['content-type']?.split(';')[0].trim() || entry.mime;
+        if (/^image\//i.test(entry.mime)) {
+            tabMedia.get(indexed.tabId)?.delete(indexed.url);
+            requestIndex.delete(details.requestId);
+            return;
+        }
         const total = headers['content-range']?.match(/\/(\d+)$/)?.[1] || headers['content-length'];
         entry.totalBytes = Math.max(entry.totalBytes, Number(total) || 0);
         entry.statusCode = details.statusCode;
@@ -147,6 +149,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 console.assert(
     canonicalMediaUrl('https://video.example.fbcdn.net/v/file.mp4?bytestart=0&byteend=99&token=x')
         === 'https://video.example.fbcdn.net/v/file.mp4?token=x'
-        && canonicalMediaUrl('https://fbcdn.net.example.com/video.mp4') === null,
+        && canonicalMediaUrl('https://fbcdn.net.example.com/video.mp4') === null
+        && !looksLikeMedia({ type: 'image' }, {})
+        && looksLikeMedia({ type: 'xmlhttprequest' }, { isVideo: true }),
     '[Facebook Authorized Video Saver] URL self-check failed',
 );
