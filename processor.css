@@ -65,9 +65,18 @@ button:disabled {
 }
 
 button:focus-visible,
-select:focus-visible {
+select:focus-visible,
+video:focus-visible {
     outline: 3px solid #77a7ff;
     outline-offset: 2px;
+}
+
+video {
+    display: block;
+    width: 100%;
+    max-height: 60vh;
+    border-radius: 8px;
+    background: black;
 }
 
 progress {

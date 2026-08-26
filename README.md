@@ -23,10 +23,10 @@ A ZIP cannot be loaded directly; extract it first. Unpacked extensions do not au
 2. Play the target video for 5–10 seconds. This lets Facebook request its signed audio/video tracks.
 3. Click **Save video** at the bottom-right.
 4. Choose **Fast download and merge**.
-5. In the processing tab, keep the most recent matching video/audio options selected and click **Download and merge MP4**.
-6. Choose where to save the finished MP4.
+5. The processing tab automatically downloads and merges the newest matching video/audio pair, then shows a local preview.
+6. Check the preview and click **Download MP4**.
 
-If Facebook exposes a combined MP4, it is saved directly. Otherwise, separate DASH audio and video tracks are merged locally. The fallback recorder works in real time when Facebook serves an unsupported layout.
+If the preview is wrong, choose different tracks and click **Prepare preview again**. If Facebook exposes a combined MP4, no merge is needed. Otherwise, separate DASH audio and video tracks are merged locally. The fallback recorder works in real time when Facebook serves an unsupported layout.
 
 ## Privacy and permissions
 
@@ -41,7 +41,7 @@ If Facebook exposes a combined MP4, it is saved directly. Otherwise, separate DA
 
 - Only unencrypted MP4/DASH tracks supported by MP4Box can be merged. DRM is rejected.
 - Signed links expire. Replay the target video and retry if a download returns HTTP 403/404.
-- Keep only the target video playing; ads or another playing video can add unrelated track choices.
+- Keep only the target video playing; ads or another playing video can make the automatically selected pair or preview incorrect.
 - Audio and video are held in browser memory while merging. A 750 MB per-track safety limit prevents tab crashes; native yt-dlp/FFmpeg is better for very large files.
 - Facebook can change its player/CDN metadata, so automatic track labels may occasionally be vague. Pick the most recent matching pair.
 

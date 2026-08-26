@@ -16,12 +16,18 @@
             <progress id="progress" max="100" value="0"></progress>
         </section>
         <section id="selection" aria-labelledby="selection-heading" hidden>
-            <h2 id="selection-heading">Choose tracks</h2>
+            <h2 id="selection-heading">Tracks</h2>
+            <p>The newest matching pair is prepared automatically. Choose different tracks only if the preview is wrong.</p>
             <label for="video">Video</label>
             <select id="video"></select>
             <label for="audio">Audio</label>
             <select id="audio"></select>
-            <button id="save" type="button">Download and merge MP4</button>
+            <button id="prepare" type="button">Prepare preview again</button>
+        </section>
+        <section id="preview-section" aria-labelledby="preview-heading" hidden>
+            <h2 id="preview-heading">Preview</h2>
+            <video id="preview" controls preload="metadata"></video>
+            <button id="save" type="button" disabled>Download MP4</button>
         </section>
         <section id="log-section" aria-labelledby="log-heading">
             <h2 id="log-heading">Details</h2>

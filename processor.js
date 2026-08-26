@@ -6,9 +6,13 @@ const progress = document.querySelector('#progress');
 const selection = document.querySelector('#selection');
 const videoSelect = document.querySelector('#video');
 const audioSelect = document.querySelector('#audio');
+const prepareButton = document.querySelector('#prepare');
+const previewSection = document.querySelector('#preview-section');
+const preview = document.querySelector('#preview');
 const saveButton = document.querySelector('#save');
 const logElement = document.querySelector('#log');
 let job;
+let previewUrl = '';
 
 function log(message) {
     logElement.textContent += `${new Date().toLocaleTimeString()}  ${message}\n`;
@@ -126,18 +130,34 @@ function bestTrack(parsed, kind) {
             : (b.channels - a.channels) || (b.sampleRate - a.sampleRate))[0];
 }
 
-async function saveBlob(blob, name) {
-    const url = URL.createObjectURL(blob);
+function clearPreview() {
+    preview.pause();
+    preview.removeAttribute('src');
+    preview.load();
+    previewSection.hidden = true;
+    saveButton.disabled = true;
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = '';
+}
+
+async function savePreview() {
+    if (!previewUrl) return;
+    saveButton.disabled = true;
     try {
-        const downloadId = await chrome.downloads.download({ url, filename: name, saveAs: true });
+        const downloadId = await chrome.downloads.download({ url: previewUrl, filename: filename(), saveAs: true });
         if (!Number.isInteger(downloadId)) throw new Error('The browser did not accept the download.');
         log(`Browser download started with ID ${downloadId}.`);
+        setStatus('MP4 download started. The preview remains available in this tab.', 100);
+    } catch (error) {
+        console.error('[Facebook Authorized Video Saver]', error);
+        log(`ERROR: ${error.stack || error.message || error}`);
+        setStatus(error.message || String(error), 100);
     } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        saveButton.disabled = !previewUrl;
     }
 }
 
-async function processSelection() {
+async function preparePreview() {
     const videoCandidate = job.candidates.find(({ url }) => url === videoSelect.value);
     const audioCandidate = job.candidates.find(({ url }) => url === audioSelect.value);
     if (!videoCandidate || !audioCandidate) {
@@ -145,7 +165,10 @@ async function processSelection() {
         return;
     }
 
-    saveButton.disabled = true;
+    prepareButton.disabled = true;
+    videoSelect.disabled = true;
+    audioSelect.disabled = true;
+    clearPreview();
     try {
         const videoBuffer = await downloadBuffer(videoCandidate, 'video track', 0, 36);
         setStatus('Validating the video track…', 38);
@@ -153,40 +176,42 @@ async function processSelection() {
         const videoTrack = bestTrack(videoParsed, 'video');
         if (!videoTrack) throw new Error('The selected video response contains no complete video track. Choose another captured option.');
 
+        let output = videoBuffer;
         const embeddedAudio = bestTrack(videoParsed, 'audio');
         if (embeddedAudio) {
             log('Facebook exposed a complete MP4 with embedded audio; no merge is needed.');
-            setStatus('Saving the complete MP4…', 95);
-            await saveBlob(new Blob([videoBuffer], { type: 'video/mp4' }), filename());
-            setStatus('Complete MP4 saved.', 100);
-            return;
+        } else {
+            const audioBuffer = videoCandidate.url === audioCandidate.url
+                ? videoBuffer
+                : await downloadBuffer(audioCandidate, 'audio track', 40, 76);
+            setStatus('Validating the audio track…', 78);
+            const audioParsed = videoCandidate.url === audioCandidate.url
+                ? videoParsed
+                : parseMp4(audioBuffer, true);
+            const audioTrack = bestTrack(audioParsed, 'audio');
+            if (!audioTrack) throw new Error('The selected audio response contains no complete audio track. Choose another captured option.');
+
+            log(`Muxing ${videoTrack.codec} video with ${audioTrack.codec} audio without re-encoding.`);
+            output = await mergeMp4([
+                { parsed: videoParsed, trackId: videoTrack.id, kind: 'video' },
+                { parsed: audioParsed, trackId: audioTrack.id, kind: 'audio' },
+            ], (ratio) => setStatus('Merging tracks locally…', 80 + ratio * 15));
         }
 
-        const audioBuffer = videoCandidate.url === audioCandidate.url
-            ? videoBuffer
-            : await downloadBuffer(audioCandidate, 'audio track', 40, 76);
-        setStatus('Validating the audio track…', 78);
-        const audioParsed = videoCandidate.url === audioCandidate.url
-            ? videoParsed
-            : parseMp4(audioBuffer, true);
-        const audioTrack = bestTrack(audioParsed, 'audio');
-        if (!audioTrack) throw new Error('The selected audio response contains no complete audio track. Choose another captured option.');
-
-        log(`Muxing ${videoTrack.codec} video with ${audioTrack.codec} audio without re-encoding.`);
-        const merged = await mergeMp4([
-            { parsed: videoParsed, trackId: videoTrack.id, kind: 'video' },
-            { parsed: audioParsed, trackId: audioTrack.id, kind: 'audio' },
-        ], (ratio) => setStatus('Merging tracks locally…', 80 + ratio * 15));
-
-        setStatus('Validating and saving the merged MP4…', 96);
-        await saveBlob(new Blob([merged], { type: 'video/mp4' }), filename());
-        setStatus(`Merged MP4 saved (${humanBytes(merged.byteLength)}).`, 100);
+        setStatus('Preparing the local preview…', 98);
+        previewUrl = URL.createObjectURL(new Blob([output], { type: 'video/mp4' }));
+        preview.src = previewUrl;
+        previewSection.hidden = false;
+        saveButton.disabled = false;
+        setStatus(`Preview ready (${humanBytes(output.byteLength)}). Check it, then download the MP4.`, 100);
     } catch (error) {
         console.error('[Facebook Authorized Video Saver]', error);
         log(`ERROR: ${error.stack || error.message || error}`);
         setStatus(error.message || String(error), 0);
     } finally {
-        saveButton.disabled = false;
+        prepareButton.disabled = false;
+        videoSelect.disabled = false;
+        audioSelect.disabled = false;
     }
 }
 
@@ -202,20 +227,33 @@ async function init() {
     const videoCandidates = job.candidates.filter((candidate) => candidateKind(candidate) !== 'audio');
     const likelyAudioCandidates = job.candidates.filter((candidate) => candidateKind(candidate) !== 'video');
     const audioCandidates = likelyAudioCandidates.length ? likelyAudioCandidates : videoCandidates;
+    const canPrepare = Boolean(videoCandidates.length && audioCandidates.length);
     populate(videoSelect, videoCandidates, 'video');
     populate(audioSelect, audioCandidates, likelyAudioCandidates.length ? 'audio' : 'combined MP4');
     selection.hidden = false;
-    saveButton.disabled = !videoCandidates.length || !audioCandidates.length;
+    prepareButton.disabled = !canPrepare;
     setStatus(
-        saveButton.disabled
-            ? 'Could not identify both tracks. Return to Facebook, play the target video for several seconds, then retry.'
-            : 'Choose the most recent matching video and audio tracks, then download.',
+        canPrepare
+            ? 'Automatically preparing the newest captured video/audio pair…'
+            : 'Could not identify both tracks. Return to Facebook, play the target video for several seconds, then retry.',
         0,
     );
     log(`Loaded ${job.candidates.length} recent signed media URL(s) from the authorized Facebook tab.`);
+    if (canPrepare) await preparePreview();
 }
 
-saveButton.addEventListener('click', () => void processSelection());
+prepareButton.addEventListener('click', () => void preparePreview());
+saveButton.addEventListener('click', () => void savePreview());
+for (const select of [videoSelect, audioSelect]) {
+    select.addEventListener('change', () => {
+        clearPreview();
+        setStatus('Track selection changed. Prepare the preview again.', 0);
+    });
+}
+preview.addEventListener('error', () => {
+    if (previewUrl) setStatus('This browser cannot preview the prepared codec, but the MP4 can still be downloaded.', 100);
+});
+window.addEventListener('pagehide', clearPreview);
 
 init().catch((error) => {
     console.error('[Facebook Authorized Video Saver]', error);
