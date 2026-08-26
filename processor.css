@@ -1,0 +1,94 @@
+:root {
+    color-scheme: light dark;
+    font: 16px/1.5 system-ui, sans-serif;
+}
+
+body {
+    margin: 0;
+    color: CanvasText;
+    background: Canvas;
+}
+
+main {
+    box-sizing: border-box;
+    width: min(760px, 100%);
+    min-height: 100vh;
+    margin: auto;
+    padding: 32px 20px;
+}
+
+h1 {
+    margin-top: 0;
+}
+
+section {
+    margin: 20px 0;
+    padding: 18px;
+    border: 1px solid color-mix(in srgb, CanvasText 25%, transparent);
+    border-radius: 12px;
+}
+
+h2 {
+    margin: 0 0 12px;
+    font-size: 1.05rem;
+}
+
+label {
+    display: block;
+    margin: 12px 0 5px;
+    font-weight: 650;
+}
+
+select,
+button {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 44px;
+    border: 1px solid color-mix(in srgb, CanvasText 35%, transparent);
+    border-radius: 8px;
+    padding: 9px 11px;
+    font: inherit;
+}
+
+button {
+    margin-top: 18px;
+    border: 0;
+    color: white;
+    background: #0866ff;
+    cursor: pointer;
+    font-weight: 700;
+}
+
+button:disabled {
+    opacity: .55;
+    cursor: wait;
+}
+
+button:focus-visible,
+select:focus-visible {
+    outline: 3px solid #77a7ff;
+    outline-offset: 2px;
+}
+
+progress {
+    width: 100%;
+    height: 18px;
+}
+
+pre {
+    max-height: 260px;
+    margin: 0;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 13px;
+}
+
+#privacy,
+.note {
+    color: color-mix(in srgb, CanvasText 75%, transparent);
+}
+
+.note {
+    font-size: 13px;
+}
