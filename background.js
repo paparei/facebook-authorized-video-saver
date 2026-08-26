@@ -135,6 +135,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 createdAt: Date.now(),
                 pageUrl: String(message.pageUrl || sender.tab.url || ''),
                 title: String(message.title || sender.tab.title || 'Facebook video'),
+                autoSave: message.autoSave === true,
             },
         });
         await chrome.tabs.create({ url: chrome.runtime.getURL(`processor.html?job=${encodeURIComponent(jobId)}`) });

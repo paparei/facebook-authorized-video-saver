@@ -23,6 +23,35 @@ function safeFilename(extension) {
     return `${title}.${extension}`;
 }
 
+function candidateKind(candidate) {
+    const hint = `${candidate.mime || ''} ${candidate.tag || ''}`;
+    if (candidate.isAudio && !candidate.isVideo) return 'audio';
+    if (candidate.isVideo && !candidate.isAudio) return 'video';
+    if (/audio|aac|opus/i.test(hint)) return 'audio';
+    if (/video|dash|h26[45]|av1|vp9/i.test(hint)) return 'video';
+    return 'unknown';
+}
+
+function tracksReady(candidates) {
+    return candidates.some((candidate) => candidateKind(candidate) === 'video')
+        && candidates.some((candidate) => candidateKind(candidate) === 'audio');
+}
+
+async function warmUpTracks(video) {
+    const wasPaused = video.paused;
+    if (wasPaused) await video.play().catch(() => {});
+    try {
+        const deadline = Date.now() + 8_000;
+        while (true) {
+            const response = await chrome.runtime.sendMessage({ type: 'GET_MEDIA' });
+            if (tracksReady(response?.candidates || []) || Date.now() >= deadline) return;
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+    } finally {
+        if (wasPaused) video.pause();
+    }
+}
+
 const host = document.createElement('div');
 host.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647';
 const shadow = host.attachShadow({ mode: 'closed' });
@@ -39,33 +68,37 @@ shadow.innerHTML = `
         #close { min-height: 30px; padding: 1px 8px; color: CanvasText; background: transparent; font-size: 21px }
         #status { margin: 9px 0; white-space: pre-line }
         #actions { display: grid; gap: 8px }
-        #record { color: CanvasText; background: color-mix(in srgb, CanvasText 14%, Canvas) }
+        #record, #options { color: CanvasText; background: color-mix(in srgb, CanvasText 14%, Canvas) }
+        #launcher { display: flex; justify-content: flex-end; gap: 8px }
+        #options { border: 1px solid #7777 }
         small { display: block; margin-top: 9px; opacity: .72 }
     </style>
     <section id="panel" role="dialog" aria-label="Facebook video saver" hidden>
         <header><span>Authorized video saver</span><button id="close" type="button" aria-label="Close">×</button></header>
-        <p id="status" aria-live="polite">Play the target video for several seconds before downloading.</p>
+        <p id="status" aria-live="polite">Use the recorder only if the one-click MP4 download fails.</p>
         <div id="actions">
-            <button id="download" type="button">Fast download and merge</button>
             <button id="record" type="button">Record active video (fallback)</button>
         </div>
         <small>Processing stays on this device. Only save videos you own or have permission to download.</small>
     </section>
-    <button id="open" type="button" aria-haspopup="dialog" aria-expanded="false">Save video</button>`;
+    <div id="launcher">
+        <button id="open" type="button">Download MP4</button>
+        <button id="options" type="button" aria-haspopup="dialog" aria-expanded="false">Options</button>
+    </div>`;
 document.documentElement.append(host);
 
 const panel = shadow.querySelector('#panel');
 const openButton = shadow.querySelector('#open');
+const optionsButton = shadow.querySelector('#options');
 const closeButton = shadow.querySelector('#close');
-const downloadButton = shadow.querySelector('#download');
 const recordButton = shadow.querySelector('#record');
 const status = shadow.querySelector('#status');
 let recording;
 
 function setPanel(open) {
     panel.hidden = !open;
-    openButton.setAttribute('aria-expanded', String(open));
-    (open ? closeButton : openButton).focus();
+    optionsButton.setAttribute('aria-expanded', String(open));
+    (open ? closeButton : optionsButton).focus();
 }
 
 function setStatus(message) {
@@ -126,7 +159,7 @@ function startRecording() {
             stream.getTracks().forEach((track) => track.stop());
             recording = undefined;
             recordButton.textContent = 'Record active video (fallback)';
-            openButton.textContent = 'Save video';
+            openButton.textContent = 'Download MP4';
             if (!chunks.length) {
                 setStatus('The recording contained no data. Keep playback running and retry.');
                 return;
@@ -154,34 +187,45 @@ function startRecording() {
     }
 }
 
-openButton.addEventListener('click', () => {
-    if (recording) stopRecording();
-    else setPanel(true);
-});
-closeButton.addEventListener('click', () => setPanel(false));
-recordButton.addEventListener('click', () => recording ? stopRecording() : startRecording());
-downloadButton.addEventListener('click', async () => {
-    if (!activeVideo()) {
-        setStatus('No visible video found. Open and play the target video first.');
+async function startFastDownload() {
+    const video = activeVideo();
+    if (!video) {
+        setStatus('No visible video found. Open the target video first.');
+        setPanel(true);
         return;
     }
-    downloadButton.disabled = true;
-    setStatus('Opening the local track downloader…');
+    openButton.disabled = true;
+    openButton.textContent = 'Preparing…';
     try {
+        await warmUpTracks(video);
         const response = await chrome.runtime.sendMessage({
             type: 'OPEN_PROCESSOR',
             pageUrl: location.href,
             title: document.title,
+            autoSave: true,
         });
         if (!response?.ok) throw new Error(response?.error || 'Could not open the downloader.');
-        setStatus('Downloader opened in a new tab.');
     } catch (error) {
         console.error('[Facebook Authorized Video Saver]', error);
-        setStatus(`${error.message}\nPlay the video for several seconds, then retry.`);
+        setStatus(`${error.message}\nPlay the target video, then retry.`);
+        setPanel(true);
     } finally {
-        downloadButton.disabled = false;
+        openButton.disabled = false;
+        openButton.textContent = 'Download MP4';
     }
-});
+}
+
+openButton.addEventListener('click', () => recording ? stopRecording() : void startFastDownload());
+optionsButton.addEventListener('click', () => setPanel(panel.hidden));
+closeButton.addEventListener('click', () => setPanel(false));
+recordButton.addEventListener('click', () => recording ? stopRecording() : startRecording());
+console.assert(
+    tracksReady([{ isVideo: true }, { isAudio: true }])
+        && !tracksReady([{ mime: 'video/mp4' }])
+        && !tracksReady([{ mime: 'image/jpeg' }]),
+    '[Facebook Authorized Video Saver] Track warm-up self-check failed',
+);
+
 shadow.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !panel.hidden) setPanel(false);
 });

@@ -20,13 +20,10 @@ A ZIP cannot be loaded directly; extract it first. Unpacked extensions do not au
 ## Use
 
 1. Log in to Facebook normally and open the target video.
-2. Play the target video for 5–10 seconds. This lets Facebook request its signed audio/video tracks.
-3. Click **Save video** at the bottom-right.
-4. Choose **Fast download and merge**.
-5. The processing tab automatically downloads and merges the newest matching video/audio pair, then shows a local preview.
-6. Check the preview and click **Download MP4**.
+2. Click **Download MP4** at the bottom-right once. If needed, the extension briefly starts playback and waits up to eight seconds for Facebook's signed tracks.
+3. The processing tab automatically selects, downloads, merges, previews, and saves the newest matching pair to the browser's normal Downloads location.
 
-If the preview is wrong, choose different tracks and click **Prepare preview again**. If Facebook exposes a combined MP4, no merge is needed. Otherwise, separate DASH audio and video tracks are merged locally. The fallback recorder works in real time when Facebook serves an unsupported layout.
+If the preview is wrong, choose different tracks, click **Prepare preview again**, then **Download MP4**. Use **Options** on Facebook for the real-time recorder fallback. If Facebook exposes a combined MP4, no merge is needed. Browsers configured to ask where each download is saved may still show their native save prompt.
 
 ## Privacy and permissions
 

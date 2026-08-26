@@ -140,11 +140,11 @@ function clearPreview() {
     previewUrl = '';
 }
 
-async function savePreview() {
+async function savePreview(saveAs = true) {
     if (!previewUrl) return;
     saveButton.disabled = true;
     try {
-        const downloadId = await chrome.downloads.download({ url: previewUrl, filename: filename(), saveAs: true });
+        const downloadId = await chrome.downloads.download({ url: previewUrl, filename: filename(), saveAs });
         if (!Number.isInteger(downloadId)) throw new Error('The browser did not accept the download.');
         log(`Browser download started with ID ${downloadId}.`);
         setStatus('MP4 download started. The preview remains available in this tab.', 100);
@@ -157,7 +157,7 @@ async function savePreview() {
     }
 }
 
-async function preparePreview() {
+async function preparePreview(autoSave = false) {
     const videoCandidate = job.candidates.find(({ url }) => url === videoSelect.value);
     const audioCandidate = job.candidates.find(({ url }) => url === audioSelect.value);
     if (!videoCandidate || !audioCandidate) {
@@ -203,7 +203,8 @@ async function preparePreview() {
         preview.src = previewUrl;
         previewSection.hidden = false;
         saveButton.disabled = false;
-        setStatus(`Preview ready (${humanBytes(output.byteLength)}). Check it, then download the MP4.`, 100);
+        setStatus(`Preview ready (${humanBytes(output.byteLength)}).${autoSave ? ' Starting the MP4 download…' : ' Check it, then download the MP4.'}`, 100);
+        if (autoSave) await savePreview(false);
     } catch (error) {
         console.error('[Facebook Authorized Video Saver]', error);
         log(`ERROR: ${error.stack || error.message || error}`);
@@ -239,7 +240,7 @@ async function init() {
         0,
     );
     log(`Loaded ${job.candidates.length} recent signed media URL(s) from the authorized Facebook tab.`);
-    if (canPrepare) await preparePreview();
+    if (canPrepare) await preparePreview(job.autoSave === true);
 }
 
 prepareButton.addEventListener('click', () => void preparePreview());
